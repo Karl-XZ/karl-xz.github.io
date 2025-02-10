@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>在线AI文本转换</title>
+  <!-- 引入MathJax库（这里使用的是CDN） -->
+  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
+  <!-- 原有：引入 html2canvas 和 jsPDF，用于导出 PDF、图片 -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+  <style>
+    /* 整体页面样式 */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      background-color: #f8f9fa; /* 浅灰背景 */
+      color: #212529;           /* 深色文字 */
+    }
+
+    /* 一个居中的容器，控制整体宽度与对齐 */
+    .container {
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #343a40;
+    }
+
+    /* 文本编辑框样式 */
+    #editor {
+      width: 100%;
+      min-height: 180px;
+      box-sizing: border-box;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      padding: 10px;
+      resize: vertical; /* 允许上下拖动调节高度 */
+      font-family: inherit;
+      outline: none;
+    }
+    #editor:focus {
+      border-color: #80bdff;
+      box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
+    }
+
+    /* 输出区域样式 */
+    #output {
+      margin-top: 20px;
+      border: 1px solid #ccc;
+      padding: 15px;
+      min-height: 100px;
+      border-radius: 4px;
+      background: #ffffff;
+      transition: font-size 0.2s; /* 调整字体大小时的过渡效果 */
+    }
+
+    /* 按钮通用样式 */
+    button {
+      margin-top: 10px;
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      background-color: #007bff; /* 主色调 */
+      border: none;
+      color: #ffffff;
+      border-radius: 4px;
+      transition: background-color 0.2s ease;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    /* 为了让多个按钮并排更和谐，可以加一点间距 */
+    button + button {
+      margin-left: 10px;
+    }
+
+    /* 滑动条（字体大小）样式 */
+    label {
+      margin-right: 8px;
+    }
+    input[type="range"] {
+      vertical-align: middle;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+
+    /* 表格样式 */
+    table {
+      margin-top: 10px;
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 16px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: left;
+    }
+    /* 设置表格标题行的背景 */
+    thead th {
+      background-color: #f1f1f1;
+    }
+
+    /* 代码块样式 */
+    pre {
+      background-color: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto; /* 过长则水平滚动 */
+      margin: 10px 0;
+    }
+    code {
+      font-family: Consolas, Monaco, 'Courier New', monospace;
+    }
+
+    /* 隐藏 MathJax 辅助层，避免 PDF 导出时公式重影 */
+    mjx-container[jax="CHTML"] mjx-assistive-mml {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>在线AI文本转换</h2>
+
+  <textarea id="editor" placeholder="在此粘贴直接从DeepSeek、ChatGPT等AI网站复制的内容。如果出现问题，请联系Bilibili账号UID：395946033"></textarea>
+  <br />
+
+  <button onclick="renderLaTeX()">渲染</button>
+  <!-- 原有按钮：导出 PDF -->
+  <button onclick="exportPDF()">导出 PDF</button>
+
+  <!-- ★ 新增：调整字体大小的滑动条，不修改其他内容 -->
+  <br />
+  <label for="fontSizeSlider">字体大小</label>
+  <input type="range" id="fontSizeSlider" min="10" max="40" value="16" oninput="adjustFontSize()">
+  <br />
+
+  <!-- ★ 新增：导出图片按钮，不修改其他内容 -->
+  <button onclick="exportImage()">导出图片</button>
+
+  <div id="output"></div>
+</div>
+
+<script>
+  /**
+   * 仅识别并渲染以下三种 Markdown 语法:
+   * 1) "---" -> <hr/>
+   * 2) "## " 开头的行 -> <h2>...</h2>
+   * 3) "**...**" -> <strong>...</strong>
+   * 以及在原段落换行时，插入 <br>
+   *
+   * 在此基础上，扩展：
+   * 1) 不同数量 "#" 的子标题解析(# -> <h1>, ### -> <h3>, etc.)
+   * 2) Markdown 表格的简单渲染
+   * 3) Markdown 代码块（```...```）的渲染
+   *
+   * 其余内容（包括 LaTeX）不做任何改动
+   */
+  function parseMarkdownForThreeFeatures(text) {
+    // 1) 分行处理，识别 "---"、"## " 以及更一般的 # 标题
+    let lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      let trimmed = lines[i].trim();
+
+      // 如果该行仅包含 "---"（水平分割线）
+      if (trimmed === "---") {
+        lines[i] = "<hr>";
+      }
+      // 如果该行以 "## " 开头（二级标题）
+      else if (lines[i].startsWith("## ")) {
+        lines[i] = "<h2>" + lines[i].substring(3) + "</h2>";
+      }
+      // 检查其他级别标题 (#、###、#### 等)
+      else {
+        let headingMatch = trimmed.match(/^(\#{1,6})\s+(.*)/);
+        if (headingMatch) {
+          let level = headingMatch[1].length; // # 的数量
+          if (level !== 2) {
+            let content = headingMatch[2];
+            lines[i] = `<h${level}>${content}</h${level}>`;
+          }
+        }
+      }
+    }
+    let joined = lines.join("\n");
+
+    // 2) 识别 "**...**" 并替换为 <strong>...</strong>
+    joined = joined.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+    // 3) 对代码块 (``` ... ```) 的简单渲染
+    joined = parseCodeBlocks(joined);
+
+    // 4) 简单表格渲染
+    joined = parseTables(joined);
+
+    // 5) 将原文本中的换行符替换为 <br>
+    joined = joined.replace(/\n/g, "<br>");
+
+    return joined;
+  }
+
+  function parseCodeBlocks(text) {
+    let codeBlockRegex = /```([\s\S]*?)```/g;
+    return text.replace(codeBlockRegex, function(match, codeContent) {
+      let escaped = codeContent.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `<pre><code>${escaped}</code></pre>`;
+    });
+  }
+
+  function parseTables(mdText) {
+    let lines = mdText.split("\n");
+    let result = [];
+    let tableBuffer = [];
+
+    function flushTable() {
+      if (tableBuffer.length > 0) {
+        result.push(renderTable(tableBuffer));
+        tableBuffer = [];
+      }
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      let trimmed = lines[i].trim();
+      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        tableBuffer.push(lines[i]);
+      } else {
+        flushTable();
+        result.push(lines[i]);
+      }
+    }
+    flushTable();
+    return result.join("\n");
+  }
+
+  function renderTable(tableLines) {
+    let html = "<table><tbody>";
+    let hasHeader = false;
+
+    for (let i = 0; i < tableLines.length; i++) {
+      let trimmed = tableLines[i].trim();
+      if (trimmed.includes("---")) {
+        continue; // 跳过含 "---" 的分隔线
+      }
+      let rowData = trimmed.slice(1, trimmed.length - 1).split("|");
+      rowData = rowData.map(cell => cell.trim());
+
+      if (!hasHeader) {
+        html += "<thead><tr>";
+        rowData.forEach(cell => {
+          html += "<th>" + cell + "</th>";
+        });
+        html += "</tr></thead><tbody>";
+        hasHeader = true;
+      } else {
+        html += "<tr>";
+        rowData.forEach(cell => {
+          html += "<td>" + cell + "</td>";
+        });
+        html += "</tr>";
+      }
+    }
+
+    html += "</tbody></table>";
+    return html;
+  }
+
+  function renderLaTeX() {
+    let rawContent = document.getElementById('editor').value;
+    let parsedContent = parseMarkdownForThreeFeatures(rawContent);
+    document.getElementById('output').innerHTML = parsedContent;
+    MathJax.typesetPromise([document.getElementById('output')])
+      .catch((err) => console.log(err.message));
+  }
+
+  // ★ 新增：导出 PDF 功能，不修改任何现有函数或逻辑
+  async function exportPDF() {
+    const { jsPDF } = window.jspdf;
+    const outputElement = document.getElementById('output');
+
+    // 将 output 区域转换为图片
+    const canvas = await html2canvas(outputElement);
+    const imgData = canvas.toDataURL('image/png');
+
+    // 生成PDF
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const imgWidth = 190; // 留出边距
+    const canvasAspect = canvas.height / canvas.width;
+    const imgHeight = imgWidth * canvasAspect;
+
+    pdf.addImage(imgData, 'PNG', (pageWidth - imgWidth) / 2, 10, imgWidth, imgHeight);
+    pdf.save('render.pdf');
+  }
+
+  // ★ 新增：滑动条调整字体大小
+  function adjustFontSize() {
+    const sliderValue = document.getElementById('fontSizeSlider').value;
+    document.getElementById('output').style.fontSize = sliderValue + 'px';
+  }
+
+  // ★ 新增：导出图片功能
+  async function exportImage() {
+    const outputElement = document.getElementById('output');
+    const canvas = await html2canvas(outputElement);
+    const imgData = canvas.toDataURL('image/png');
+
+    // 触发下载
+    const link = document.createElement('a');
+    link.download = 'render.png';
+    link.href = imgData;
+    link.click();
+  }
+</script>
+
+</body>
+</html>
