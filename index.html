@@ -282,24 +282,64 @@
   }
 
   // ★ 新增：导出 PDF 功能，不修改任何现有函数或逻辑
-  async function exportPDF() {
+async function exportPDF() {
     const { jsPDF } = window.jspdf;
     const outputElement = document.getElementById('output');
 
-    // 将 output 区域转换为图片
-    const canvas = await html2canvas(outputElement);
+    // 用 html2canvas 渲染整个 output 内容
+    const canvas = await html2canvas(outputElement, {
+        scale: 2, // 提高清晰度
+        useCORS: true // 允许跨域图片渲染
+    });
+
     const imgData = canvas.toDataURL('image/png');
 
-    // 生成PDF
+    // 创建 PDF 对象（A4 纵向）
     const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const imgWidth = 190; // 留出边距
-    const canvasAspect = canvas.height / canvas.width;
-    const imgHeight = imgWidth * canvasAspect;
 
-    pdf.addImage(imgData, 'PNG', (pageWidth - imgWidth) / 2, 10, imgWidth, imgHeight);
+    // 计算 PDF 页面尺寸
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+
+    // 计算图片尺寸
+    const imgWidth = pageWidth - 20; // 设置边距
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+    let yPosition = 10; // 第一页的 Y 轴起始位置
+    let currentHeight = 0; // 记录当前 PDF 中已占用的高度
+
+    // **拆分长图**（如果图片高度超出一页，分页）
+    let remainingHeight = imgHeight;
+    while (remainingHeight > 0) {
+        let splitHeight = Math.min(remainingHeight, pageHeight - 20); // 确保内容不会超出 A4 高度
+
+        // 截取部分图像
+        let pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = Math.min(canvas.height, (splitHeight / imgHeight) * canvas.height);
+        let pageCtx = pageCanvas.getContext('2d');
+        pageCtx.drawImage(
+            canvas, 
+            0, currentHeight, canvas.width, (splitHeight / imgHeight) * canvas.height, // 从原始 canvas 截取的区域
+            0, 0, pageCanvas.width, pageCanvas.height // 目标 canvas 尺寸
+        );
+
+        let pageImage = pageCanvas.toDataURL('image/png');
+        pdf.addImage(pageImage, 'PNG', 10, yPosition, imgWidth, splitHeight);
+
+        remainingHeight -= splitHeight;
+        currentHeight += (splitHeight / imgHeight) * canvas.height;
+
+        // **如果内容超出一页，创建新页**
+        if (remainingHeight > 0) {
+            pdf.addPage();
+            yPosition = 10;
+        }
+    }
+
+    // 下载 PDF 文件
     pdf.save('render.pdf');
-  }
+}
 
   // ★ 新增：滑动条调整字体大小
   function adjustFontSize() {
