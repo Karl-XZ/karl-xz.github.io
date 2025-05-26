@@ -4,7 +4,20 @@
   <meta charset="UTF-8" />
   <title>在线AI文本转换</title>
   <!-- 引入MathJax库（这里使用的是CDN） -->
-  <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<!-- MathJax配置：启用 $...$ 行内数学公式解析 -->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\(', '\\)']]
+    },
+    svg: {
+      fontCache: 'global'
+    }
+  };
+</script>
+<!-- 引入MathJax -->
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
 
   <!-- 原有：引入 html2canvas 和 jsPDF，用于导出 PDF、图片 -->
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
