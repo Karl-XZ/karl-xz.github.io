@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <title>在线AI文本转换</title>
   <!-- 引入MathJax库（这里使用的是CDN） -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <!-- MathJax配置：启用 $...$ 行内数学公式解析 -->
 <script>
   window.MathJax = {
@@ -178,48 +179,53 @@
    *
    * 其余内容（包括 LaTeX）不做任何改动
    */
-  function parseMarkdownForThreeFeatures(text) {
-    // 1) 分行处理，识别 "---"、"## " 以及更一般的 # 标题
-    let lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      let trimmed = lines[i].trim();
+ function parseMarkdownForThreeFeatures(text) {
+  // 1. 提取所有 $...$ LaTeX 表达式，避免被误改
+  const latexMatches = [];
+  text = text.replace(/\$([^\$]+)\$/g, (match, expr) => {
+    latexMatches.push(`$${expr}$`);
+    return `%%LATEX_${latexMatches.length - 1}%%`;
+  });
 
-      // 如果该行仅包含 "---"（水平分割线）
-      if (trimmed === "---") {
-        lines[i] = "<hr>";
-      }
-      // 如果该行以 "## " 开头（二级标题）
-      else if (lines[i].startsWith("## ")) {
-        lines[i] = "<h2>" + lines[i].substring(3) + "</h2>";
-      }
-      // 检查其他级别标题 (#、###、#### 等)
-      else {
-        let headingMatch = trimmed.match(/^(\#{1,6})\s+(.*)/);
-        if (headingMatch) {
-          let level = headingMatch[1].length; // # 的数量
-          if (level !== 2) {
-            let content = headingMatch[2];
-            lines[i] = `<h${level}>${content}</h${level}>`;
-          }
-        }
+  // 2. 逐行处理标题（优先），保留 ** 加粗内容
+  let lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    let trimmed = lines[i].trim();
+
+    // 水平线
+    if (trimmed === "---") {
+      lines[i] = "<hr>";
+    } else {
+      // 标题匹配（# 开头）
+      const headingMatch = trimmed.match(/^(\#{1,6})\s+(.*)/);
+      if (headingMatch) {
+        const level = headingMatch[1].length;
+        const content = headingMatch[2];
+        lines[i] = `<h${level}>${content}</h${level}>`;
       }
     }
-    let joined = lines.join("\n");
-
-    // 2) 识别 "**...**" 并替换为 <strong>...</strong>
-    joined = joined.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-
-    // 3) 对代码块 (``` ... ```) 的简单渲染
-    joined = parseCodeBlocks(joined);
-
-    // 4) 简单表格渲染
-    joined = parseTables(joined);
-
-    // 5) 将原文本中的换行符替换为 <br>
-    joined = joined.replace(/\n/g, "<br>");
-
-    return joined;
   }
+
+  let joined = lines.join("\n");
+
+  // 3. 加粗解析（晚于标题）
+  joined = joined.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+  // 4. 代码块与表格处理
+  joined = parseCodeBlocks(joined);
+  joined = parseTables(joined);
+
+  // 5. 还原所有 LaTeX 占位符
+  latexMatches.forEach((latex, i) => {
+    joined = joined.replace(`%%LATEX_${i}%%`, latex);
+  });
+
+  // 6. 替换换行符为 <br>，仅作用于非 block 标签之后
+  joined = joined.replace(/\n/g, "<br>");
+
+  return joined;
+}
+
 
   function parseCodeBlocks(text) {
     let codeBlockRegex = /```([\s\S]*?)```/g;
@@ -286,13 +292,26 @@
     return html;
   }
 
-  function renderLaTeX() {
-    let rawContent = document.getElementById('editor').value;
-    let parsedContent = parseMarkdownForThreeFeatures(rawContent);
-    document.getElementById('output').innerHTML = parsedContent;
-    MathJax.typesetPromise([document.getElementById('output')])
-      .catch((err) => console.log(err.message));
-  }
+function renderLaTeX() {
+  const rawContent = document.getElementById('editor').value;
+
+  // 步骤 1：初步解析 Markdown 样式（标题、表格、代码块）
+  let parsedContent = parseMarkdownForThreeFeatures(rawContent);
+
+  // 步骤 2：手动清理 markdown 残留符号（但不能破坏公式）
+  parsedContent = parsedContent
+    .replace(/(^|[^$])#+/g, '$1')           // 删除非公式内的 #
+    .replace(/(^|[^$])\*+/g, '$1')          // 删除非公式内的 *
+    .replace(/-{3,}/g, '')                  // 删除分割线 ---
+
+  // 步骤 3：插入 HTML
+  const output = document.getElementById('output');
+  output.innerHTML = parsedContent;
+
+  // 步骤 4：MathJax 渲染公式
+  MathJax.typesetPromise([output])
+    .catch((err) => console.error('MathJax Error:', err));
+}
 
   // ★ 新增：导出 PDF 功能，不修改任何现有函数或逻辑
 async function exportPDF() {
